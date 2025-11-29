@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+
+# Session data (SENSITIVE - WhatsApp auth)
+session/
+.wwebjs_auth/
+.wwebjs_cache/
+bot-state.json
+
+# QR Code
+qr-code.png
+
+# Logs
+logs/
+*.log
+
+# Configuration (SENSITIVE - contains phone numbers)
+config.json
+config/config.json
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Testing
+coverage/
+.nyc_output/
+
+# PM2
+.pm2/
+pm2.log
+ecosystem.config.js.backup
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

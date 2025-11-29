@@ -1,0 +1,12 @@
+{
+  "numberA": "6289635319015@c.us",
+  "numberB": "6287826991483@c.us",
+  "botNumber": "",
+  "prefixA": "[From A]",
+  "prefixB": "[From B]",
+  "retryAttempts": 3,
+  "retryDelay": 1000,
+  "maxLogSize": 10,
+  "logDirectory": "./logs",
+  "sessionDirectory": "./session"
+}
