@@ -66,9 +66,16 @@ export class PddiktiScraper {
 
       // Get body text and detail URLs
       const bodyText = await page.evaluate('document.body.innerText') as string;
+      
+      // Debug: log body text
+      this.logger.info('Page body text length', { length: bodyText.length });
+      this.logger.info('Body text preview', { preview: bodyText.substring(0, 500) });
+      
       const detailUrls = await page.evaluate(`
         Array.from(document.querySelectorAll('a[href*="detail-mahasiswa"]')).map(a => a.href)
       `) as string[];
+      
+      this.logger.info('Detail URLs found', { count: detailUrls.length });
 
       const results = this.parseMahasiswaFromText(bodyText, detailUrls);
 
