@@ -68,18 +68,59 @@ export class PddiktiScraper {
       const bodyText = await page.evaluate('document.body.innerText') as string;
       
       // Debug: log body text
-      this.logger.info('Body text preview', { preview: bodyText.substring(0, 1000) });
+      this.logger.info('Body text preview', { preview: bodyText.substring(0, 1500) });
       
       // Check for server errors
       if (bodyText.includes('503') || bodyText.includes('502') || bodyText.includes('Temporarily Unavailable')) {
         throw new Error('PDDIKTI server sedang tidak tersedia (503). Coba lagi nanti.');
       }
       
+      // Get detail URLs
       const detailUrls = await page.evaluate(`
         Array.from(document.querySelectorAll('a[href*="detail-mahasiswa"]')).map(a => a.href)
       `) as string[];
+      
+      this.logger.info('Detail URLs found', { count: detailUrls.length, urls: detailUrls.slice(0, 5) });
+      
+      // Try to get data directly from table rows if available
+      const tableData = await page.evaluate(`
+        (() => {
+          const rows = [];
+          const trs = document.querySelectorAll('tr');
+          trs.forEach(tr => {
+            const tds = tr.querySelectorAll('td');
+            if (tds.length >= 4) {
+              const link = tr.querySelector('a[href*="detail-mahasiswa"]');
+              rows.push({
+                nama: tds[0]?.textContent?.trim() || '',
+                nim: tds[1]?.textContent?.trim() || '',
+                pt: tds[2]?.textContent?.trim() || '',
+                prodi: tds[3]?.textContent?.trim() || '',
+                url: link?.getAttribute('href') || '',
+              });
+            }
+          });
+          return rows;
+        })()
+      `) as { nama: string; nim: string; pt: string; prodi: string; url: string }[];
+      
+      this.logger.info('Table data found', { count: tableData.length, data: tableData.slice(0, 3) });
 
-      const results = this.parseMahasiswaFromText(bodyText, detailUrls);
+      // Use table data if available, otherwise fall back to text parsing
+      let results: MahasiswaInfo[];
+      if (tableData.length > 0) {
+        results = tableData
+          .filter(row => row.nama && row.nim)
+          .map(row => ({
+            nama: row.nama,
+            nim: row.nim,
+            pt: row.pt,
+            prodi: row.prodi,
+            detailUrl: row.url ? (row.url.startsWith('http') ? row.url : `${this.baseUrl}${row.url}`) : undefined,
+          }));
+      } else {
+        results = this.parseMahasiswaFromText(bodyText, detailUrls);
+      }
 
       this.logger.info('PDDIKTI search completed', { resultsCount: results.length });
       return results;
@@ -128,16 +169,24 @@ export class PddiktiScraper {
   private parseMahasiswaFromText(text: string, detailUrls: string[]): MahasiswaInfo[] {
     const results: MahasiswaInfo[] = [];
     
-    // Find mahasiswa section
-    const mahasiswaStart = text.indexOf('MahasiswaNama');
+    // Find mahasiswa section - handle both "MahasiswaNama" and "Mahasiswa\nNama" formats
+    let mahasiswaStart = text.indexOf('Mahasiswa\nNama');
     if (mahasiswaStart === -1) {
-      this.logger.info('No MahasiswaNama found in text');
+      mahasiswaStart = text.indexOf('MahasiswaNama');
+    }
+    if (mahasiswaStart === -1) {
+      // Try finding just "Mahasiswa" followed by table header
+      mahasiswaStart = text.indexOf('Mahasiswa\n');
+    }
+    
+    if (mahasiswaStart === -1) {
+      this.logger.info('No Mahasiswa section found in text');
       return results;
     }
     
     // Find end of mahasiswa section
     let mahasiswaEnd = text.length;
-    const endMarkers = ['Perguruan TinggiTidak', 'Program StudiTidak', 'Pusat Data', 'dari1Perguruan'];
+    const endMarkers = ['Perguruan Tinggi\n\nTidak', 'Program Studi\n\nTidak', 'Pusat Data', '\n\ndari\n\n'];
     for (const marker of endMarkers) {
       const idx = text.indexOf(marker, mahasiswaStart);
       if (idx !== -1 && idx < mahasiswaEnd) mahasiswaEnd = idx;
@@ -148,39 +197,32 @@ export class PddiktiScraper {
     
     if (mahasiswaSection.includes('Tidak ada hasil pencarian')) return results;
     
-    // Remove header - handle both spaced and non-spaced versions
-    mahasiswaSection = mahasiswaSection
-      .replace(/MahasiswaNama\s*NIM\s*Perguruan Tinggi\s*Program Studi\s*Aksi/gi, '')
-      .replace(/\d+dari\d+/g, '')
-      .trim();
-    
     // Split by "Lihat Detail"
     const entries = mahasiswaSection.split('Lihat Detail').filter(e => e.trim().length > 5);
-    this.logger.info('Entries found', { count: entries.length, entries: entries.map(e => e.substring(0, 100)) });
+    this.logger.info('Entries found', { count: entries.length });
     
     let urlIndex = 0;
     for (const entry of entries) {
+      // Skip header row
+      if (entry.includes('Nama\tNIM\t') || entry.includes('Program Studi\tAksi')) continue;
+      
       const clean = entry.trim();
       if (clean.length < 5) continue;
       
-      // Try splitting by tabs or multiple spaces
-      let parts = clean.split(/\t+/).filter(p => p.trim().length > 0);
+      // Try splitting by tabs first (most reliable)
+      let parts = clean.split('\t').filter(p => p.trim().length > 0);
       
-      // If tab split doesn't work, try multiple spaces
+      // If tab split doesn't give enough parts, try newlines
+      if (parts.length < 4) {
+        parts = clean.split('\n').filter(p => p.trim().length > 0);
+      }
+      
+      // If still not enough parts, try multiple spaces
       if (parts.length < 4) {
         parts = clean.split(/\s{2,}/).filter(p => p.trim().length > 0);
       }
       
-      // If still not enough parts, try to parse by known patterns
-      if (parts.length < 4) {
-        // Try regex to extract: NAME (all caps) followed by NIM (numbers) followed by PT followed by PRODI
-        const match = clean.match(/^([A-Z\s]+?)\s+(\d+)\s+(.+?)\s{2,}(.+?)$/);
-        if (match) {
-          parts = [match[1], match[2], match[3], match[4]];
-        }
-      }
-      
-      this.logger.info('Parsing entry', { entry: clean.substring(0, 100), parts });
+      this.logger.info('Parsing entry', { parts: parts.slice(0, 5) });
       
       if (parts.length >= 4) {
         results.push({
