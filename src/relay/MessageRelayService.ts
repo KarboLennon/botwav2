@@ -3,12 +3,14 @@ import { Logger } from '../logger/Logger';
 import { ConfigManager } from '../config/ConfigManager';
 import { ErrorHandler } from '../error/ErrorHandler';
 import { WhatsAppClientManager } from '../client/WhatsAppClientManager';
+import { CommandHandler } from '../command/CommandHandler';
 
 export class MessageRelayService {
   private logger: Logger;
   private configManager: ConfigManager;
   private errorHandler: ErrorHandler;
   private clientManager: WhatsAppClientManager;
+  private commandHandler: CommandHandler;
 
   constructor(
     logger: Logger,
@@ -20,6 +22,7 @@ export class MessageRelayService {
     this.configManager = configManager;
     this.errorHandler = errorHandler;
     this.clientManager = clientManager;
+    this.commandHandler = new CommandHandler(logger, clientManager);
   }
 
   /**
@@ -46,6 +49,24 @@ export class MessageRelayService {
         type: message.type,
         hasMedia: message.hasMedia,
       });
+
+      // Check if message is a command (handle commands from anyone)
+      if (this.commandHandler.isCommand(message)) {
+        const handled = await this.commandHandler.handleCommand(message);
+        if (handled) {
+          this.logger.info('Command handled', { from, command: message.body.split(' ')[0] });
+          return;
+        }
+      }
+
+      // Check if message is a PDDIKTI selection (number reply)
+      if (this.commandHandler.isPddiktiSelection(message)) {
+        const handled = await this.commandHandler.handlePddiktiSelection(message);
+        if (handled) {
+          this.logger.info('PDDIKTI selection handled', { from, selection: message.body });
+          return;
+        }
+      }
 
       // Get relay target
       const targetNumber = this.configManager.getNumberMapping(from);
