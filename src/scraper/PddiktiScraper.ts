@@ -67,6 +67,9 @@ export class PddiktiScraper {
       // Get body text and detail URLs
       const bodyText = await page.evaluate('document.body.innerText') as string;
       
+      // Debug: log body text
+      this.logger.info('Body text preview', { preview: bodyText.substring(0, 1000) });
+      
       // Check for server errors
       if (bodyText.includes('503') || bodyText.includes('502') || bodyText.includes('Temporarily Unavailable')) {
         throw new Error('PDDIKTI server sedang tidak tersedia (503). Coba lagi nanti.');
@@ -125,28 +128,59 @@ export class PddiktiScraper {
   private parseMahasiswaFromText(text: string, detailUrls: string[]): MahasiswaInfo[] {
     const results: MahasiswaInfo[] = [];
     
+    // Find mahasiswa section
     const mahasiswaStart = text.indexOf('MahasiswaNama');
-    if (mahasiswaStart === -1) return results;
+    if (mahasiswaStart === -1) {
+      this.logger.info('No MahasiswaNama found in text');
+      return results;
+    }
     
+    // Find end of mahasiswa section
     let mahasiswaEnd = text.length;
-    const endMarkers = ['Perguruan TinggiTidak', 'Program StudiTidak', 'Pusat Data'];
+    const endMarkers = ['Perguruan TinggiTidak', 'Program StudiTidak', 'Pusat Data', 'dari1Perguruan'];
     for (const marker of endMarkers) {
       const idx = text.indexOf(marker, mahasiswaStart);
       if (idx !== -1 && idx < mahasiswaEnd) mahasiswaEnd = idx;
     }
     
     let mahasiswaSection = text.substring(mahasiswaStart, mahasiswaEnd);
+    this.logger.info('Mahasiswa section', { section: mahasiswaSection.substring(0, 500) });
+    
     if (mahasiswaSection.includes('Tidak ada hasil pencarian')) return results;
     
-    mahasiswaSection = mahasiswaSection.replace(/MahasiswaNama\s+NIM\s+Perguruan Tinggi\s+Program Studi\s+Aksi/g, '');
+    // Remove header - handle both spaced and non-spaced versions
+    mahasiswaSection = mahasiswaSection
+      .replace(/MahasiswaNama\s*NIM\s*Perguruan Tinggi\s*Program Studi\s*Aksi/gi, '')
+      .replace(/\d+dari\d+/g, '')
+      .trim();
+    
+    // Split by "Lihat Detail"
     const entries = mahasiswaSection.split('Lihat Detail').filter(e => e.trim().length > 5);
+    this.logger.info('Entries found', { count: entries.length, entries: entries.map(e => e.substring(0, 100)) });
     
     let urlIndex = 0;
     for (const entry of entries) {
-      let clean = entry.trim().replace(/\d+dari\d+/g, '').trim();
+      const clean = entry.trim();
       if (clean.length < 5) continue;
       
-      const parts = clean.split(/\t+|\s{2,}/).filter(p => p.trim().length > 0);
+      // Try splitting by tabs or multiple spaces
+      let parts = clean.split(/\t+/).filter(p => p.trim().length > 0);
+      
+      // If tab split doesn't work, try multiple spaces
+      if (parts.length < 4) {
+        parts = clean.split(/\s{2,}/).filter(p => p.trim().length > 0);
+      }
+      
+      // If still not enough parts, try to parse by known patterns
+      if (parts.length < 4) {
+        // Try regex to extract: NAME (all caps) followed by NIM (numbers) followed by PT followed by PRODI
+        const match = clean.match(/^([A-Z\s]+?)\s+(\d+)\s+(.+?)\s{2,}(.+?)$/);
+        if (match) {
+          parts = [match[1], match[2], match[3], match[4]];
+        }
+      }
+      
+      this.logger.info('Parsing entry', { entry: clean.substring(0, 100), parts });
       
       if (parts.length >= 4) {
         results.push({
